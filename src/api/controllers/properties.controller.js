@@ -141,6 +141,8 @@ const createProperty = async (req, res) => {
   const { identifier, data } = req.body;
   const responseIdentifier = identifier || { id: null, user: null };
 
+  console.log("1- Recevied Request: ",req.body)
+
   if (!data) {
     return res.status(400).json({
       identifier: responseIdentifier,
@@ -234,6 +236,8 @@ const createProperty = async (req, res) => {
       data: { message: 'Property created successfully', propertyId },
     });
 
+    console.log("--- Success")
+
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Error creating property:', error);
@@ -242,7 +246,8 @@ const createProperty = async (req, res) => {
       identifier: responseIdentifier,
       data: { error: 'An error occurred while creating the property.', details: error.message },
     });
-  } finally {
+    console.log("--- Failed")
+  } finally {    
     client.release();
   }
 };
