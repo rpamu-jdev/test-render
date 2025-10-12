@@ -141,8 +141,6 @@ const createProperty = async (req, res) => {
   const { identifier, data } = req.body;
   const responseIdentifier = identifier || { id: null, user: null };
 
-  console.log("1- Recevied Request: ",req.body)
-
   if (!data) {
     return res.status(400).json({
       identifier: responseIdentifier,
@@ -236,8 +234,6 @@ const createProperty = async (req, res) => {
       data: { message: 'Property created successfully', propertyId },
     });
 
-    console.log("--- Success")
-
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Error creating property:', error);
@@ -246,15 +242,108 @@ const createProperty = async (req, res) => {
       identifier: responseIdentifier,
       data: { error: 'An error occurred while creating the property.', details: error.message },
     });
-    console.log("--- Failed")
-  } finally {    
+  } finally {
     client.release();
   }
 };
+
+
+/**
+ * @description Search for properties with dynamic filters and pagination
+ * @route POST /api/v1/properties/search
+ */
+const searchProperties = async (req, res) => {
+  const { identifier, data } = req.body;
+  const responseIdentifier = identifier || { id: null, user: null };
+
+  if (!data || !data.filters) {
+    return res.status(400).json({
+      identifier: responseIdentifier,
+      data: { error: 'Request must include "data" object with a "filters" key.' },
+    });
+  }
+
+  const { filters, pagination = {} } = data;
+  const { page = 1, limit = 10 } = pagination;
+  const offset = (page - 1) * limit;
+
+  // Dynamically build the WHERE clause and parameter array
+  let whereClauses = [];
+  let queryParams = [];
+  let paramIndex = 1;
+
+  // Geospatial filter (the most complex one)
+  if (filters.latitude && filters.longitude && filters.radius_km) {
+    whereClauses.push(`ST_DWithin(location, ST_MakePoint($${paramIndex++}, $${paramIndex++})::geography, $${paramIndex++})`);
+    queryParams.push(filters.longitude, filters.latitude, filters.radius_km * 1000); // ST_DWithin uses meters
+  }
+
+  if (filters.bedrooms) {
+    whereClauses.push(`bedrooms = $${paramIndex++}`);
+    queryParams.push(filters.bedrooms);
+  }
+  
+  if (filters.property_type) {
+    whereClauses.push(`property_type = $${paramIndex++}`);
+    queryParams.push(filters.property_type);
+  }
+
+  if (filters.min_price) {
+    whereClauses.push(`price >= $${paramIndex++}`);
+    queryParams.push(filters.min_price);
+  }
+  
+  if (filters.max_price) {
+    whereClauses.push(`price <= $${paramIndex++}`);
+    queryParams.push(filters.max_price);
+  }
+  
+  // Combine all WHERE clauses
+  const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+  try {
+    // First, run a query to get the total count of matching properties
+    const countQuery = `SELECT COUNT(*) FROM properties ${whereString}`;
+    const totalResult = await db.query(countQuery, queryParams);
+    const total_items = parseInt(totalResult.rows[0].count, 10);
+    const total_pages = Math.ceil(total_items / limit);
+
+    // Now, get the actual paginated data
+    const dataQuery = `
+      SELECT id, title, price, city, state, total_sqft, bedrooms, bathrooms, property_type, latitude, longitude
+      FROM properties
+      ${whereString}
+      ORDER BY created_at DESC
+      LIMIT $${paramIndex++} OFFSET $${paramIndex++};
+    `;
+    const finalQueryParams = [...queryParams, limit, offset];
+    const { rows } = await db.query(dataQuery, finalQueryParams);
+
+    res.status(200).json({
+      identifier: responseIdentifier,
+      data: rows,
+      pagination: {
+        current_page: page,
+        total_pages: total_pages,
+        total_items: total_items,
+        limit: limit,
+      },
+    });
+
+  } catch (error) {
+    console.error('Error searching properties:', error);
+    res.status(500).json({
+      identifier: responseIdentifier,
+      data: { error: 'An error occurred while searching for properties.' },
+    });
+  }
+};
+
 
 module.exports = {
   createProperty,
   getPropertyById,
   getProperties,
+  searchProperties,
 };
 
