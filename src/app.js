@@ -16,4 +16,7 @@ app.get('/', (req, res) => {
 const propertyRoutes = require('./api/routes/properties.routes');
 app.use('/api/v1/properties', propertyRoutes);
 
+const s3Routes = require('./api/routes/s3.routes');
+app.use("/api/v1/s3/",s3Routes);
+
 module.exports = app; // Export the configured app
