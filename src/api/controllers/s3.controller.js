@@ -35,7 +35,7 @@ const generatePresignedUrl = async (req, res) => {
         Key: s3Key,
         Expires: 60 * 5, // URL expires in 5 minutes
         ContentType: file.file_type,
-        ACL: 'public-read',
+        // ACL: 'public-read',
       };
 
       // Return a promise that resolves with all the necessary info
