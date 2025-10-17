@@ -297,6 +297,12 @@ const searchProperties = async (req, res) => {
     whereClauses.push(`price <= $${paramIndex++}`);
     queryParams.push(filters.max_price);
   }
+
+  
+  if (filters.city) {
+    whereClauses.push(`city = $${paramIndex++}`);
+    queryParams.push(filters.city);
+  }
   
   // Combine all WHERE clauses
   const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
