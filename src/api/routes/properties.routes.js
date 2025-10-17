@@ -18,7 +18,6 @@ router.post('/details', propertyController.getPropertyById);
 
 
 // /api/v1/properties/search
-
 router.post('/search', propertyController.searchProperties);
 
 

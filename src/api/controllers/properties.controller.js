@@ -55,8 +55,13 @@ const formatPropertyResponse = (propertyRow) => {
  * @route POST /api/v1/properties/details
  */
 const getPropertyById = async (req, res) => {
-  const { identifier, data } = req.body;
+
+  const { identifier, data } = req.body;  
+
+  // Extract user_id from the identifier for recording the view
+  const user_id = identifier?.user_id; 
   const responseIdentifier = identifier || { request_id: null, user_id: null };
+
 
   if (!data || !data.property_id) {
     return res.status(400).json({
@@ -65,7 +70,25 @@ const getPropertyById = async (req, res) => {
     });
   }
   
-  const { property_id } = data;
+
+    const { property_id } = data;
+
+    // --- New Logic: Record the view in the background
+    // This is "fire-and-forget" so it doesn't slow down the main response.    
+    if (user_id) {
+        const recordViewQuery = `
+            INSERT INTO user_recently_viewed (user_id, property_id, viewed_at)
+            VALUES ($1, $2, NOW())
+            ON CONFLICT (user_id, property_id)
+            DO UPDATE SET viewed_at = NOW();
+        `;
+        db.query(recordViewQuery, [user_id, property_id]).catch(err => {
+            // Log the error but don't block the response
+            console.error('Failed to record property view:', err);
+        });
+    }
+
+
 
   try {
     const query = `
@@ -134,7 +157,7 @@ const getProperties = async (req, res) => {
 
 
 /**
- * @description Create a new property listing with comprehensive details
+ * @description Create a new property listing 
  * @route POST /api/v1/properties
  */
 const createProperty = async (req, res) => {
@@ -344,6 +367,7 @@ const searchProperties = async (req, res) => {
     });
   }
 };
+
 
 
 module.exports = {
