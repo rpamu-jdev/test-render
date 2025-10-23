@@ -326,6 +326,11 @@ const searchProperties = async (req, res) => {
     whereClauses.push(`city = $${paramIndex++}`);
     queryParams.push(filters.city);
   }
+
+  if (filters.posted_by) {
+    whereClauses.push(`posted_by = $${paramIndex++}`);
+    queryParams.push(filters.posted_by);
+  }
   
   // Combine all WHERE clauses
   const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
