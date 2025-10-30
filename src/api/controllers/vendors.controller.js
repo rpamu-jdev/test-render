@@ -425,7 +425,76 @@ const listAllVendors = async (req, res) => {
     }
 };
 
+/**
+ * @description Subscribe a vendor to a plan
+ * @route POST /api/v1/vendors/subscribe
+ */
+const subscribeVendor = async (req, res) => {
+    const { identifier, data } = req.body;
+    const responseIdentifier = identifier || { request_id: null, user_id: null };
+    const { vendor_id, plan_id } = data;
 
+    if (!vendor_id || !plan_id) {
+        return res.status(400).json({ 
+            identifier: responseIdentifier, 
+            data: { error: '"vendor_id" and "plan_id" are required.' } 
+        });
+    }
+
+    const client = await db.getClient();
+    try {
+        await client.query('BEGIN');
+
+        // Step 1: Get plan duration
+        const planRes = await client.query('SELECT duration_days FROM subscription_plans WHERE plan_id = $1 AND is_active = true', [plan_id]);
+        
+        if (planRes.rows.length === 0) {
+            return res.status(404).json({ 
+                identifier: responseIdentifier, 
+                data: { error: 'Active subscription plan not found.' } 
+            });
+        }
+        const { duration_days } = planRes.rows[0];
+
+        // Step 2: Calculate expiry date
+        const expires_at = new Date();
+        expires_at.setDate(expires_at.getDate() + duration_days);
+
+        // Step 3: Update the vendor's subscription
+        const updateQuery = `
+            UPDATE vendors
+            SET 
+                subscription_plan_id = $1,
+                subscription_expires_at = $2
+            WHERE vendor_id = $3
+            RETURNING vendor_id, subscription_plan_id, subscription_expires_at;
+        `;
+        const updateRes = await client.query(updateQuery, [plan_id, expires_at, vendor_id]);
+
+        if (updateRes.rows.length === 0) {
+            return res.status(404).json({ 
+                identifier: responseIdentifier, 
+                data: { error: 'Vendor not found.' } 
+            });
+        }
+
+        await client.query('COMMIT');
+        res.status(200).json({
+            identifier: responseIdentifier,
+            data: updateRes.rows[0]
+        });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error subscribing vendor:', error);
+        res.status(500).json({ 
+            identifier: responseIdentifier, 
+            data: { error: 'An internal server error occurred.' } 
+        });
+    } finally {
+        client.release();
+    }
+};
 
 
 module.exports = {
@@ -434,7 +503,8 @@ module.exports = {
     getVendorDetails,
     listVendorsByService,
     listAllVendors,
-    listVendorReviews, 
+    listVendorReviews,
+    subscribeVendor, 
     updateReview,      
     deleteReview       
 };

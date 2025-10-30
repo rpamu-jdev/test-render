@@ -36,4 +36,8 @@ const subscriptionRoutes  = require('./api/routes/subscriptions.routes');
 app.use("/api/v1/subscriptions/",subscriptionRoutes);
 
 
+const chatRoutes  = require('./api/routes/chat.routes');
+app.use("/api/v1/chat/",chatRoutes);
+
+
 module.exports = app; // Export the configured app

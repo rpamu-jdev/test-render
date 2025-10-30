@@ -7,6 +7,7 @@ router.post('/create', vendorController.createVendor);
 router.post('/details', vendorController.getVendorDetails);
 router.post('/search-by-service', vendorController.listVendorsByService);
 router.post('/list', vendorController.listAllVendors); 
+router.post('/subscribe', vendorController.subscribeVendor); 
 
 // --- Review Routes ---
 router.post('/reviews/add', vendorController.addReview);
