@@ -6,7 +6,7 @@ const formatPropertyResponse = (propertyRow) => {
 
   // Destructure the flat row from the database
   const {
-    id, listed_by_id, listing_type, title, heading, description, price, currency, price_per_sqft,
+    id, posted_by, listing_type, title, heading, description, price, currency, price_per_sqft,
     street, city, state, country, zip_code, latitude, longitude, property_type,
     total_sqft, built_up_sqft, carpet_sqft, plot_sqft, year_built, facing, furnishing,
     parking_type, floor_number, total_floors, availability_status, possession_date,
@@ -18,7 +18,7 @@ const formatPropertyResponse = (propertyRow) => {
   // Reconstruct the nested JSON structure
   return {
     id,
-    listed_by: listed_by_id,
+    posted_by,
     listing_type,
     title,
     heading,
@@ -55,31 +55,54 @@ const formatPropertyResponse = (propertyRow) => {
  * @route POST /api/v1/properties/details
  */
 const getPropertyById = async (req, res) => {
-  const { identifier, data } = req.body;
-  const responseIdentifier = identifier || { id: null, user: null };
 
-  if (!data || !data.id) {
+  const { identifier, data } = req.body;  
+
+  // Extract user_id from the identifier for recording the view
+  const user_id = identifier?.user_id; 
+  const responseIdentifier = identifier || { request_id: null, user_id: null };
+
+
+  if (!data || !data.property_id) {
     return res.status(400).json({
       identifier: responseIdentifier,
-      data: { error: 'Request body must contain a "data" object with a property "id".' },
+      data: { error: 'Request body must contain a "data" object with a property "property_id".' },
     });
   }
   
-  const { id } = data;
+
+    const { property_id } = data;
+
+    // --- New Logic: Record the view in the background
+    // This is "fire-and-forget" so it doesn't slow down the main response.    
+    if (user_id) {
+        const recordViewQuery = `
+            INSERT INTO user_recently_viewed (user_id, property_id, viewed_at)
+            VALUES ($1, $2, NOW())
+            ON CONFLICT (user_id, property_id)
+            DO UPDATE SET viewed_at = NOW();
+        `;
+        db.query(recordViewQuery, [user_id, property_id]).catch(err => {
+            // Log the error but don't block the response
+            console.error('Failed to record property view:', err);
+        });
+    }
+
+
 
   try {
     const query = `
       SELECT
           p.*,
-          (SELECT json_agg(json_build_object('url', pm.url, 'type', pm.type)) FROM property_media pm WHERE pm.property_id = p.id) as media,
-          (SELECT array_agg(a.name) FROM property_amenities pa JOIN amenities a ON pa.amenity_id = a.id WHERE pa.property_id = p.id) as amenities,
-          (SELECT array_agg(b.name) FROM property_badges pb JOIN badges b ON pb.badge_id = b.id WHERE pb.property_id = p.id) as badges
+          (SELECT json_agg(json_build_object('url', pm.url, 'type', pm.type)) FROM property_media pm WHERE pm.property_id = p.property_id) as media,
+          (SELECT array_agg(a.name) FROM property_amenities pa JOIN amenities a ON pa.amenity_id = a.amenity_id WHERE pa.property_id = p.property_id) as amenities,
+          (SELECT array_agg(b.name) FROM property_badges pb JOIN badges b ON pb.badge_id = b.badge_id WHERE pb.property_id = p.property_id) as badges
       FROM
           properties p
       WHERE
-          p.id = $1;
+          p.property_id = $1;
     `;
-    const { rows } = await db.query(query, [id]);
+    const { rows } = await db.query(query, [property_id]);
 
     if (rows.length === 0) {
       return res.status(404).json({
@@ -111,7 +134,7 @@ const getPropertyById = async (req, res) => {
  */
 const getProperties = async (req, res) => {
     const { identifier } = req.body;
-    const responseIdentifier = identifier || { id: null, user: null };
+    const responseIdentifier = identifier || { request_id: null, user_id: null };
 
     try {
         const query = 'SELECT id, title, price, city, state, total_sqft, bedrooms, bathrooms FROM properties ORDER BY created_at DESC LIMIT 20;';
@@ -134,12 +157,12 @@ const getProperties = async (req, res) => {
 
 
 /**
- * @description Create a new property listing with comprehensive details
+ * @description Create a new property listing 
  * @route POST /api/v1/properties
  */
 const createProperty = async (req, res) => {
   const { identifier, data } = req.body;
-  const responseIdentifier = identifier || { id: null, user: null };
+  const responseIdentifier = identifier || { request_id: null, user_id: null };
 
   if (!data) {
     return res.status(400).json({
@@ -149,7 +172,7 @@ const createProperty = async (req, res) => {
   }
 
   const {
-    listed_by_id, listing_type, title, heading, description, property_type, price, currency = 'INR',
+    posted_by, listing_type, title, heading, description, property_type, price, currency = 'INR',
     price_per_sqft = null, maintenance_charges = null, street, city, state, country = 'India',
     zip_code, latitude = null, longitude = null, total_sqft, built_up_sqft = null, carpet_sqft = null,
     plot_sqft = null, bedrooms, bathrooms, balconies = null, year_built = null, facing = null,
@@ -159,10 +182,10 @@ const createProperty = async (req, res) => {
     allow_whatsapp = true, amenities = [], badges = [], image_urls = [], video_url = null,
   } = data;
 
-  if (!listed_by_id || !listing_type || !title || !price || !city || !state || !property_type || !total_sqft) {
+  if (!posted_by || !listing_type || !title || !price || !city || !state || !property_type || !total_sqft) {
     return res.status(400).json({
       identifier: responseIdentifier,
-      data: { error: 'Missing required fields: listed_by_id, listing_type, title, price, city, state, property_type, total_sqft are mandatory.' },
+      data: { error: 'Missing required fields: posted_by, listing_type, title, price, city, state, property_type, total_sqft are mandatory.' },
     });
   }
 
@@ -173,7 +196,7 @@ const createProperty = async (req, res) => {
 
     const propertyInsertQuery = `
       INSERT INTO properties (
-        listed_by_id, listing_type, title, heading, description, property_type, price, currency, price_per_sqft,
+        posted_by, listing_type, title, heading, description, property_type, price, currency, price_per_sqft,
         maintenance_charges, street, city, state, country, zip_code, latitude, longitude, total_sqft, built_up_sqft,
         carpet_sqft, plot_sqft, bedrooms, bathrooms, balconies, year_built, facing, furnishing, parking_type,
         floor_number, total_floors, availability_status, possession_date, seller_name, seller_alt_phone, preferred_contact_time,
@@ -181,17 +204,17 @@ const createProperty = async (req, res) => {
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
         $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38
-      ) RETURNING id;
+      ) RETURNING property_id;
     `;
     const propertyValues = [
-      listed_by_id, listing_type, title, heading, description, property_type, price, currency, price_per_sqft,
+      posted_by, listing_type, title, heading, description, property_type, price, currency, price_per_sqft,
       maintenance_charges, street, city, state, country, zip_code, latitude, longitude, total_sqft, built_up_sqft,
       carpet_sqft, plot_sqft, bedrooms, bathrooms, balconies, year_built, facing, furnishing, parking_type,
       floor_number, total_floors, availability_status, possession_date, seller_name, seller_alt_phone, preferred_contact_time,
       allow_in_app_message, allow_in_app_call, allow_whatsapp
     ];
     const newProperty = await client.query(propertyInsertQuery, propertyValues);
-    const propertyId = newProperty.rows[0].id;
+    const propertyId = newProperty.rows[0].property_id;
 
     if (image_urls.length > 0) {
       const mediaInsertQuery = 'INSERT INTO property_media (property_id, url, type) VALUES ($1, $2, $3)';
@@ -210,7 +233,7 @@ const createProperty = async (req, res) => {
       }
       const linkAmenityQuery = `
         INSERT INTO property_amenities (property_id, amenity_id)
-        SELECT $1, id FROM amenities WHERE name = ANY($2::text[]);
+        SELECT $1, amenity_id FROM amenities WHERE name = ANY($2::text[]);
       `;
       await client.query(linkAmenityQuery, [propertyId, amenities]);
     }
@@ -222,7 +245,7 @@ const createProperty = async (req, res) => {
       }
       const linkBadgeQuery = `
         INSERT INTO property_badges (property_id, badge_id)
-        SELECT $1, id FROM badges WHERE name = ANY($2::text[]);
+        SELECT $1, badge_id FROM badges WHERE name = ANY($2::text[]);
       `;
       await client.query(linkBadgeQuery, [propertyId, badges]);
     }
@@ -247,9 +270,115 @@ const createProperty = async (req, res) => {
   }
 };
 
+
+/**
+ * @description Search for properties with dynamic filters and pagination
+ * @route POST /api/v1/properties/search
+ */
+const searchProperties = async (req, res) => {
+  const { identifier, data } = req.body;
+  const responseIdentifier = identifier || { request_id: null, user_id: null };
+
+  if (!data || !data.filters) {
+    return res.status(400).json({
+      identifier: responseIdentifier,
+      data: { error: 'Request must include "data" object with a "filters" key.' },
+    });
+  }
+
+  const { filters, pagination = {} } = data;
+  const { page = 1, limit = 10 } = pagination;
+  const offset = (page - 1) * limit;
+
+  // Dynamically build the WHERE clause and parameter array
+  let whereClauses = [];
+  let queryParams = [];
+  let paramIndex = 1;
+
+  // Geospatial filter (the most complex one)
+  if (filters.latitude && filters.longitude && filters.radius_km) {
+    whereClauses.push(`ST_DWithin(location, ST_MakePoint($${paramIndex++}, $${paramIndex++})::geography, $${paramIndex++})`);
+    queryParams.push(filters.longitude, filters.latitude, filters.radius_km * 1000); // ST_DWithin uses meters
+  }
+
+  if (filters.bedrooms) {
+    whereClauses.push(`bedrooms = $${paramIndex++}`);
+    queryParams.push(filters.bedrooms);
+  }
+  
+  if (filters.property_type) {
+    whereClauses.push(`property_type = $${paramIndex++}`);
+    queryParams.push(filters.property_type);
+  }
+
+  if (filters.min_price) {
+    whereClauses.push(`price >= $${paramIndex++}`);
+    queryParams.push(filters.min_price);
+  }
+  
+  if (filters.max_price) {
+    whereClauses.push(`price <= $${paramIndex++}`);
+    queryParams.push(filters.max_price);
+  }
+
+  
+  if (filters.city) {
+    whereClauses.push(`city = $${paramIndex++}`);
+    queryParams.push(filters.city);
+  }
+
+  if (filters.posted_by) {
+    whereClauses.push(`posted_by = $${paramIndex++}`);
+    queryParams.push(filters.posted_by);
+  }
+  
+  // Combine all WHERE clauses
+  const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+  try {
+    // First, run a query to get the total count of matching properties
+    const countQuery = `SELECT COUNT(*) FROM properties ${whereString}`;
+    const totalResult = await db.query(countQuery, queryParams);
+    const total_items = parseInt(totalResult.rows[0].count, 10);
+    const total_pages = Math.ceil(total_items / limit);
+
+    // Now, get the actual paginated data
+    const dataQuery = `
+      SELECT property_id, title, price, city, state, total_sqft, bedrooms, bathrooms, property_type, latitude, longitude
+      FROM properties
+      ${whereString}
+      ORDER BY created_at DESC
+      LIMIT $${paramIndex++} OFFSET $${paramIndex++};
+    `;
+    const finalQueryParams = [...queryParams, limit, offset];
+    const { rows } = await db.query(dataQuery, finalQueryParams);
+
+    res.status(200).json({
+      identifier: responseIdentifier,
+      data: rows,
+      pagination: {
+        current_page: page,
+        total_pages: total_pages,
+        total_items: total_items,
+        limit: limit,
+      },
+    });
+
+  } catch (error) {
+    console.error('Error searching properties:', error);
+    res.status(500).json({
+      identifier: responseIdentifier,
+      data: { error: 'An error occurred while searching for properties.' },
+    });
+  }
+};
+
+
+
 module.exports = {
   createProperty,
   getPropertyById,
   getProperties,
+  searchProperties,
 };
 

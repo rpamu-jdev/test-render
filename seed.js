@@ -85,7 +85,7 @@ const seedDatabase = async () => {
       // to avoid errors from Object.values() having an unpredictable order.
       const propertyInsertQuery = `
         INSERT INTO properties
-          (listed_by_id, listing_type, title, description, price, city, state, zip_code, property_type, total_sqft, bedrooms, bathrooms, country)
+          (posted_by, listing_type, title, description, price, city, state, zip_code, property_type, total_sqft, bedrooms, bathrooms, country)
         VALUES
           ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING id;
