@@ -156,8 +156,9 @@ const getProperties = async (req, res) => {
 };
 
 
+
 /**
- * @description Create a new property listing 
+ * @description Create a new property listing
  * @route POST /api/v1/properties
  */
 const createProperty = async (req, res) => {
@@ -171,7 +172,10 @@ const createProperty = async (req, res) => {
     });
   }
 
+  // --- 1. DESTRUCTURE ALL CORE FIELDS ---
+  // These are all the fields to store in dedicated columns
   const {
+    // Your existing fields
     posted_by, listing_type, title, heading, description, property_type, price, currency = 'INR',
     price_per_sqft = null, maintenance_charges = null, street, city, state, country = 'India',
     zip_code, latitude = null, longitude = null, total_sqft, built_up_sqft = null, carpet_sqft = null,
@@ -179,9 +183,18 @@ const createProperty = async (req, res) => {
     furnishing = null, parking_type = null, floor_number = null, total_floors = null,
     availability_status = 'Ready to Move', possession_date = null, seller_name, seller_alt_phone = null,
     preferred_contact_time = null, allow_in_app_message = true, allow_in_app_call = false,
-    allow_whatsapp = true, amenities = [], badges = [], image_urls = [], video_url = null,
+    allow_whatsapp = true, amenities = [], badges = [], 
+    image_urls = [], 
+    video_url = null,
+
+    // New fields for new columns
+    email = null,
+    locality = null,
+    sub_locality = null
   } = data;
 
+  // --- 2. VALIDATION ---
+  // (Your existing validation)
   if (!posted_by || !listing_type || !title || !price || !city || !state || !property_type || !total_sqft) {
     return res.status(400).json({
       identifier: responseIdentifier,
@@ -189,34 +202,73 @@ const createProperty = async (req, res) => {
     });
   }
 
+  // --- 3. CREATE THE 'DETAILS' JSONB BUCKET ---
+  
+  // Copy the entire data payload
+  const details = { ...data };
+
+  // Define *all* keys that are stored in dedicated columns.
+  // These will be *removed* from the 'details' object.
+  const coreFields = [
+    'posted_by', 'listing_type', 'title', 'heading', 'description', 'property_type', 'price', 'currency',
+    'price_per_sqft', 'maintenance_charges', 'street', 'city', 'state', 'country',
+    'zip_code', 'latitude', 'longitude', 'total_sqft', 'built_up_sqft', 'carpet_sqft',
+    'plot_sqft', 'bedrooms', 'bathrooms', 'balconies', 'year_built', 'facing',
+    'furnishing', 'parking_type', 'floor_number', 'total_floors',
+    'availability_status', 'possession_date', 'seller_name', 'seller_alt_phone',
+    'preferred_contact_time', 'allow_in_app_message', 'allow_in_app_call',
+    'allow_whatsapp', 'amenities', 'badges', 'image_urls', 'video_url', 
+    'email', 'locality', 'sub_locality'
+  ];
+
+  // Remove all core fields, leaving only the "extra" data
+  for (const field of coreFields) {
+    delete details[field];
+  }
+
+  // 'details' object now contains all other 150+ fields
   const client = await db.getClient();
 
   try {
     await client.query('BEGIN');
 
+  
     const propertyInsertQuery = `
       INSERT INTO properties (
         posted_by, listing_type, title, heading, description, property_type, price, currency, price_per_sqft,
         maintenance_charges, street, city, state, country, zip_code, latitude, longitude, total_sqft, built_up_sqft,
         carpet_sqft, plot_sqft, bedrooms, bathrooms, balconies, year_built, facing, furnishing, parking_type,
         floor_number, total_floors, availability_status, possession_date, seller_name, seller_alt_phone, preferred_contact_time,
-        allow_in_app_message, allow_in_app_call, allow_whatsapp
+        allow_in_app_message, allow_in_app_call, allow_whatsapp,
+        email, locality, sub_locality, details,
+        location 
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-        $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38
+        $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38,
+        $39, $40, $41, $42,
+        ST_MakePoint($43, $44)::geography
       ) RETURNING property_id;
     `;
+    
+
+    // Add longitude and latitude to the *end* of the array
+    // to match the new $43 and $44 parameters.
     const propertyValues = [
       posted_by, listing_type, title, heading, description, property_type, price, currency, price_per_sqft,
       maintenance_charges, street, city, state, country, zip_code, latitude, longitude, total_sqft, built_up_sqft,
       carpet_sqft, plot_sqft, bedrooms, bathrooms, balconies, year_built, facing, furnishing, parking_type,
       floor_number, total_floors, availability_status, possession_date, seller_name, seller_alt_phone, preferred_contact_time,
-      allow_in_app_message, allow_in_app_call, allow_whatsapp
+      allow_in_app_message, allow_in_app_call, allow_whatsapp,
+      email, locality, sub_locality, details,
+      longitude, latitude // Add $43 (long) and $44 (lat)
     ];
+    
     const newProperty = await client.query(propertyInsertQuery, propertyValues);
     const propertyId = newProperty.rows[0].property_id;
 
-    if (image_urls.length > 0) {
+    // --- (No changes below, this logic is all correct) ---
+
+    if (image_urls && image_urls.length > 0) {
       const mediaInsertQuery = 'INSERT INTO property_media (property_id, url, type) VALUES ($1, $2, $3)';
       for (const url of image_urls) {
         await client.query(mediaInsertQuery, [propertyId, url, 'image']);
@@ -226,7 +278,7 @@ const createProperty = async (req, res) => {
       await client.query('INSERT INTO property_media (property_id, url, type) VALUES ($1, $2, $3)', [propertyId, video_url, 'video']);
     }
 
-    if (amenities.length > 0) {
+    if (amenities && amenities.length > 0) {
       const amenityInsertQuery = 'INSERT INTO amenities (name) VALUES ($1) ON CONFLICT (name) DO NOTHING';
       for (const name of amenities) {
         await client.query(amenityInsertQuery, [name]);
@@ -238,7 +290,7 @@ const createProperty = async (req, res) => {
       await client.query(linkAmenityQuery, [propertyId, amenities]);
     }
 
-    if (badges.length > 0) {
+    if (badges && badges.length > 0) {
       const badgeInsertQuery = 'INSERT INTO badges (name) VALUES ($1) ON CONFLICT (name) DO NOTHING';
       for (const name of badges) {
         await client.query(badgeInsertQuery, [name]);
@@ -270,7 +322,6 @@ const createProperty = async (req, res) => {
   }
 };
 
-
 /**
  * @description Search for properties with dynamic filters and pagination
  * @route POST /api/v1/properties/search
@@ -290,66 +341,104 @@ const searchProperties = async (req, res) => {
   const { page = 1, limit = 10 } = pagination;
   const offset = (page - 1) * limit;
 
-  // Dynamically build the WHERE clause and parameter array
+  // --- Dynamic Query Builder ---
   let whereClauses = [];
   let queryParams = [];
   let paramIndex = 1;
 
-  // Geospatial filter (the most complex one)
-  if (filters.latitude && filters.longitude && filters.radius_km) {
-    whereClauses.push(`ST_DWithin(location, ST_MakePoint($${paramIndex++}, $${paramIndex++})::geography, $${paramIndex++})`);
-    queryParams.push(filters.longitude, filters.latitude, filters.radius_km * 1000); // ST_DWithin uses meters
+  // Whitelist of core columns for simple equality checks
+  const coreEqualityFields = new Set([
+    'posted_by', 'listing_type', 'property_type', 'city', 'state', 'country',
+    'zip_code', 'bedrooms', 'bathrooms', 'balconies', 'year_built', 'facing',
+    'furnishing', 'parking_type', 'floor_number', 'total_floors',
+    'availability_status', 'seller_name', 'email', 'locality', 'sub_locality'
+  ]);
+
+  for (const [key, value] of Object.entries(filters)) {
+    if (value === null || value === undefined || value === '') {
+      continue;
+    }
+
+    switch (key) {
+      // --- Special Composite Filters ---
+      case 'latitude':
+        if (filters.longitude && filters.radius_km) {
+          // ST_DWithin(geography, point, meters)
+          whereClauses.push(`ST_DWithin(location, ST_MakePoint($${paramIndex++}, $${paramIndex++})::geography, $${paramIndex++})`);
+          queryParams.push(filters.longitude, filters.latitude, filters.radius_km * 1000);
+        }
+        // NOTE: No 'break' here is intentional. We want it to fall through
+        // to the 'longitude'/'radius_km' block to be skipped.
+        
+      // --- THIS IS THE FIX ---
+      // We add 'latitude' here. If radius_km was missing, 'latitude'
+      // will fall through to this block and be safely skipped,
+      // preventing it from hitting the 'default' case.
+      case 'longitude':
+      case 'radius_km':
+        // Already handled by 'latitude' block, so we skip
+        break;
+
+      // --- Range Filters (Core) ---
+      case 'min_price':
+        whereClauses.push(`price >= $${paramIndex++}`);
+        queryParams.push(value);
+        break;
+      case 'max_price':
+        whereClauses.push(`price <= $${paramIndex++}`);
+        queryParams.push(value);
+        break;
+      case 'min_sqft':
+        whereClauses.push(`total_sqft >= $${paramIndex++}`);
+        queryParams.push(value);
+        break;
+      case 'max_sqft':
+        whereClauses.push(`total_sqft <= $${paramIndex++}`);
+        queryParams.push(value);
+        break;
+
+      // --- Text Search Filter (Core) ---
+      case 'search_term':
+        whereClauses.push(`(title ILIKE $${paramIndex++} OR description ILIKE $${paramIndex++})`);
+        queryParams.push(`%${value}%`, `%${value}%`);
+        break;
+
+      // --- Default: Core Equality or JSONB ---
+      default:
+        if (coreEqualityFields.has(key)) {
+          whereClauses.push(`${key} = $${paramIndex++}`);
+          queryParams.push(value);
+        } else {
+          const jsonFilter = {};
+          jsonFilter[key] = value;
+          
+          whereClauses.push(`details @> $${paramIndex++}::jsonb`);
+          queryParams.push(JSON.stringify(jsonFilter));
+        }
+        break;
+    }
   }
 
-  if (filters.bedrooms) {
-    whereClauses.push(`bedrooms = $${paramIndex++}`);
-    queryParams.push(filters.bedrooms);
-  }
-  
-  if (filters.property_type) {
-    whereClauses.push(`property_type = $${paramIndex++}`);
-    queryParams.push(filters.property_type);
-  }
+  // --- (No changes below this line) ---
 
-  if (filters.min_price) {
-    whereClauses.push(`price >= $${paramIndex++}`);
-    queryParams.push(filters.min_price);
-  }
-  
-  if (filters.max_price) {
-    whereClauses.push(`price <= $${paramIndex++}`);
-    queryParams.push(filters.max_price);
-  }
-
-  
-  if (filters.city) {
-    whereClauses.push(`city = $${paramIndex++}`);
-    queryParams.push(filters.city);
-  }
-
-  if (filters.posted_by) {
-    whereClauses.push(`posted_by = $${paramIndex++}`);
-    queryParams.push(filters.posted_by);
-  }
-  
-  // Combine all WHERE clauses
   const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
   try {
-    // First, run a query to get the total count of matching properties
     const countQuery = `SELECT COUNT(*) FROM properties ${whereString}`;
     const totalResult = await db.query(countQuery, queryParams);
     const total_items = parseInt(totalResult.rows[0].count, 10);
     const total_pages = Math.ceil(total_items / limit);
 
-    // Now, get the actual paginated data
     const dataQuery = `
-      SELECT property_id, title, price, city, state, total_sqft, bedrooms, bathrooms, property_type, latitude, longitude
+      SELECT 
+        property_id, title, price, city, state, locality, sub_locality,
+        total_sqft, bedrooms, bathrooms, property_type, latitude, longitude
       FROM properties
       ${whereString}
       ORDER BY created_at DESC
       LIMIT $${paramIndex++} OFFSET $${paramIndex++};
     `;
+    
     const finalQueryParams = [...queryParams, limit, offset];
     const { rows } = await db.query(dataQuery, finalQueryParams);
 
@@ -372,8 +461,6 @@ const searchProperties = async (req, res) => {
     });
   }
 };
-
-
 
 module.exports = {
   createProperty,
