@@ -1,67 +1,13 @@
 const db = require('../../config/database');
 
-// --- Helper function to format the database row into the desired nested JSON ---
-const formatPropertyResponse = (propertyRow) => {
-  if (!propertyRow) return null;
-
-  // Destructure the flat row from the database
-  const {
-    id, posted_by, listing_type, title, heading, description, price, currency, price_per_sqft,
-    street, city, state, country, zip_code, latitude, longitude, property_type,
-    total_sqft, built_up_sqft, carpet_sqft, plot_sqft, year_built, facing, furnishing,
-    parking_type, floor_number, total_floors, availability_status, possession_date,
-    maintenance_charges, views, status, seller_name, seller_alt_phone, preferred_contact_time,
-    allow_in_app_message, allow_in_app_call, allow_whatsapp, created_at, updated_at,
-    media, amenities, badges
-  } = propertyRow;
-
-  // Reconstruct the nested JSON structure
-  return {
-    id,
-    posted_by,
-    listing_type,
-    title,
-    heading,
-    description,
-    price,
-    currency,
-    price_per_sqft,
-    address: { street, city, state, country, zip_code, latitude, longitude },
-    property_type,
-    area: { total_sqft, built_up_sqft, carpet_sqft, plot_sqft },
-    year_built,
-    facing,
-    furnishing,
-    parking_type,
-    floor_info: { floor_number, total_floors },
-    availability_status,
-    possession_date,
-    maintenance_charges,
-    amenities: amenities || [], // Default to empty array if null
-    badges: badges || [],       // Default to empty array if null
-    image_urls: media ? media.filter(m => m.type === 'image').map(m => m.url) : [],
-    video_url: media ? (media.find(m => m.type === 'video') || {}).url || null : null,
-    views,
-    status,
-    seller: { name: seller_name, alt_phone: seller_alt_phone, preferred_contact_time },
-    contact_preferences: { allow_in_app_message, allow_in_app_call, allow_whatsapp },
-    created_at,
-    updated_at
-  };
-};
-
 /**
  * @description Get a single property by its ID, with all related data
  * @route POST /api/v1/properties/details
  */
 const getPropertyById = async (req, res) => {
-
-  const { identifier, data } = req.body;  
-
-  // Extract user_id from the identifier for recording the view
-  const user_id = identifier?.user_id; 
+  const { identifier, data } = req.body;
+  const user_id = identifier?.user_id;
   const responseIdentifier = identifier || { request_id: null, user_id: null };
-
 
   if (!data || !data.property_id) {
     return res.status(400).json({
@@ -69,28 +15,25 @@ const getPropertyById = async (req, res) => {
       data: { error: 'Request body must contain a "data" object with a property "property_id".' },
     });
   }
-  
 
-    const { property_id } = data;
+  const { property_id } = data;
 
-    // --- New Logic: Record the view in the background
-    // This is "fire-and-forget" so it doesn't slow down the main response.    
-    if (user_id) {
-        const recordViewQuery = `
-            INSERT INTO user_recently_viewed (user_id, property_id, viewed_at)
-            VALUES ($1, $2, NOW())
-            ON CONFLICT (user_id, property_id)
-            DO UPDATE SET viewed_at = NOW();
-        `;
-        db.query(recordViewQuery, [user_id, property_id]).catch(err => {
-            // Log the error but don't block the response
-            console.error('Failed to record property view:', err);
-        });
-    }
-
-
+  // --- Record the view in the background ---
+  if (user_id) {
+    const recordViewQuery = `
+        INSERT INTO user_recently_viewed (user_id, property_id, viewed_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (user_id, property_id)
+        DO UPDATE SET viewed_at = NOW();
+    `;
+    db.query(recordViewQuery, [user_id, property_id]).catch(err => {
+      console.error('Failed to record property view:', err);
+    });
+  }
 
   try {
+    // --- THIS QUERY IS PERFECT ---
+    // It already fetches all columns (p.*) including 'details'
     const query = `
       SELECT
           p.*,
@@ -111,6 +54,8 @@ const getPropertyById = async (req, res) => {
       });
     }
 
+    // --- USE THE HELPER FUNCTION ---
+    // This call flattens the 'details' object
     const formattedProperty = formatPropertyResponse(rows[0]);
 
     res.status(200).json({
@@ -126,6 +71,26 @@ const getPropertyById = async (req, res) => {
     });
   }
 };
+
+/**
+ * --- HELPER FUNCTION ---
+ * This function takes the raw property object from the database
+ * and flattens the 'details' JSONB column into the top level.
+ */
+function formatPropertyResponse(property) {
+  if (!property) return null;
+
+  // 1. Destructure the 'details' object and all 'rest' of the properties
+  const { details, ...rest } = property;
+
+  // 2. Return a new object that spreads:
+  //    - All the 'rest' of the properties (id, title, price, media, etc.)
+  //    - All the properties from *inside* 'details' (number_of_cabins, etc.)
+  return {
+    ...rest,
+    ...(details || {}) // Use (details || {}) to gracefully handle null details
+  };
+}
 
 
 /**
