@@ -198,6 +198,7 @@ const getRecentlyViewed = async (req, res) => {
     }
 };
 
+// Note: Assumes you have `const db = require('../../config/database');` at the top.
 
 /**
  * @description Create a new user
@@ -205,52 +206,57 @@ const getRecentlyViewed = async (req, res) => {
  */
 const createUser = async (req, res) => {
   const { identifier, data } = req.body;
-  const responseIdentifier = identifier || { requestId: null, userId: null };
+  const response_identifier = identifier || { request_id: null, user_id: null };
 
-  // Note: user_id is provided in the data, as it comes from an auth provider (like Firebase)
-  const { userId, name, email, phone, profileImageUrl } = data;
+  const { user_id, name, email, phone, profile_image_url } = data;
+  
+  // CHANGED: Set the user_role from data, or default to 'customer'
+  // This lines up with our database default, but it's good to be explicit.
+  const user_role = data.user_role || 'customer';
 
-  if (!userId || !name || !email || !phone) {
+  if (!user_id || !name || !email || !phone) {
     return res.status(400).json({
-      identifier: responseIdentifier,
-      data: { error: 'Request data must contain userId, name, email, and phone.' },
+      identifier: response_identifier,
+      data: { error: 'Request data must contain user_id, name, email, and phone.' },
     });
   }
 
   try {
+    // CHANGED: Added 'user_role' to the INSERT query
     const query = `
-      INSERT INTO users (user_id, name, email, phone, profile_image_url, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+      INSERT INTO users (user_id, name, email, phone, profile_image_url, user_role, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
       ON CONFLICT (user_id) DO NOTHING -- Fails silently if user already exists
       RETURNING 
-        user_id AS "userId", 
+        user_id, 
         name, 
         email, 
         phone, 
-        profile_image_url AS "profileImageUrl", 
-        created_at AS "createdAt", 
-        updated_at AS "updatedAt";
+        profile_image_url, 
+        user_role, -- CHANGED: Added user_role to RETURNING
+        created_at, 
+        updated_at;
     `;
     
-    const { rows } = await db.query(query, [userId, name, email, phone, profileImageUrl]);
+    // CHANGED: Added user_role as the 6th parameter ($6)
+    const { rows } = await db.query(query, [user_id, name, email, phone, profile_image_url, user_role]);
 
     if (rows.length === 0) {
-      // This means the ON CONFLICT triggered
       return res.status(409).json({
-        identifier: responseIdentifier,
-        data: { error: 'User with this userId already exists.' }
+        identifier: response_identifier,
+        data: { error: 'User with this user_id already exists.' }
       });
     }
 
     res.status(201).json({
-      identifier: responseIdentifier,
+      identifier: response_identifier,
       data: { message: 'User created successfully', user: rows[0] },
     });
 
   } catch (error) {
     console.error('Error creating user:', error);
     res.status(500).json({
-      identifier: responseIdentifier,
+      identifier: response_identifier,
       data: { error: 'An error occurred while creating the user.' }
     });
   }
@@ -262,47 +268,49 @@ const createUser = async (req, res) => {
  */
 const getUserById = async (req, res) => {
   const { identifier, data } = req.body;
-  const responseIdentifier = identifier || { requestId: null, userId: null };
-  const { userId } = data;
+  const response_identifier = identifier || { request_id: null, user_id: null };
+  const { user_id } = data;
 
-  if (!userId) {
+  if (!user_id) {
     return res.status(400).json({
-      identifier: responseIdentifier,
-      data: { error: 'Request data must contain userId.' },
+      identifier: response_identifier,
+      data: { error: 'Request data must contain user_id.' },
     });
   }
 
   try {
+    // CHANGED: Added 'user_role' to the SELECT statement
     const query = `
       SELECT 
-        user_id AS "userId", 
+        user_id, 
         name, 
         email, 
         phone, 
-        profile_image_url AS "profileImageUrl", 
-        created_at AS "createdAt", 
-        updated_at AS "updatedAt"
+        profile_image_url,
+        user_role,
+        created_at, 
+        updated_at
       FROM users 
       WHERE user_id = $1;
     `;
-    const { rows } = await db.query(query, [userId]);
+    const { rows } = await db.query(query, [user_id]); 
 
     if (rows.length === 0) {
       return res.status(404).json({
-        identifier: responseIdentifier,
+        identifier: response_identifier,
         data: { error: 'User not found.' }
       });
     }
 
     res.status(200).json({
-      identifier: responseIdentifier,
+      identifier: response_identifier,
       data: rows[0],
     });
 
   } catch (error) {
     console.error('Error fetching user:', error);
     res.status(500).json({
-      identifier: responseIdentifier,
+      identifier: response_identifier,
       data: { error: 'An error occurred while fetching the user.' }
     });
   }
@@ -314,83 +322,87 @@ const getUserById = async (req, res) => {
  */
 const updateUser = async (req, res) => {
   const { identifier, data } = req.body;
-  const responseIdentifier = identifier || { requestId: null, userId: null };
+  const response_identifier = identifier || { request_id: null, user_id: null };
   
-  // User ID is required to know *who* to update
-  const { userId, name, phone, profileImageUrl } = data;
+  // CHANGED: Added 'user_role' to destructuring
+  const { user_id, name, phone, profile_image_url, user_role } = data;
 
-  if (!userId) {
+  if (!user_id) {
     return res.status(400).json({
-      identifier: responseIdentifier,
-      data: { error: 'Request data must contain userId.' },
+      identifier: response_identifier,
+      data: { error: 'Request data must contain user_id.' },
     });
   }
 
-  // Note: We don't allow updating email as it's often a unique login.
-  // We also don't allow updating 'name' if it's not provided.
-  // This builds the query dynamically based on what fields are provided.
-
   const fields = [];
   const values = [];
-  let paramIndex = 1;
+  let param_index = 1;
 
   if (name) {
-    fields.push(`name = $${paramIndex++}`);
+    fields.push(`name = $${param_index++}`);
     values.push(name);
   }
   if (phone) {
-    fields.push(`phone = $${paramIndex++}`);
+    fields.push(`phone = $${param_index++}`);
     values.push(phone);
   }
-  if (profileImageUrl) {
-    fields.push(`profile_image_url = $${paramIndex++}`);
-    values.push(profileImageUrl);
+  if (profile_image_url) {
+    fields.push(`profile_image_url = $${param_index++}`);
+    values.push(profile_image_url);
+  }
+  
+  // CHANGED: Allow updating the user_role
+  // You might want to add security/admin checks here in a real app
+  if (user_role) { 
+    fields.push(`user_role = $${param_index++}`);
+    values.push(user_role);
   }
 
   if (fields.length === 0) {
      return res.status(400).json({
-      identifier: responseIdentifier,
-      data: { error: 'Request data must contain at least one field to update (name, phone, profileImageUrl).' },
+      identifier: response_identifier,
+      data: { error: 'Request data must contain at least one field to update (name, phone, profile_image_url, user_role).' }, // CHANGED: Added user_role to error
     });
   }
 
-  // Add the user ID for the WHERE clause
-  values.push(userId);
+  values.push(user_id);
 
   try {
+    // CHANGED: Added 'user_role' to RETURNING
     const query = `
       UPDATE users SET
         ${fields.join(', ')},
         updated_at = NOW()
-      WHERE user_id = $${paramIndex}
+      WHERE user_id = $${param_index}
       RETURNING 
-        user_id AS "userId", 
+        user_id, 
         name, 
         email, 
         phone, 
-        profile_image_url AS "profileImageUrl", 
-        created_at AS "createdAt", 
-        updated_at AS "updatedAt";
+        profile_image_url, 
+        user_role,
+        created_at, 
+        updated_at;
     `;
 
     const { rows } = await db.query(query, values);
 
     if (rows.length === 0) {
       return res.status(404).json({
-        identifier: responseIdentifier,
+        identifier: response_identifier,
         data: { error: 'User not found.' }
       });
     }
 
     res.status(200).json({
-      identifier: responseIdentifier,
+      identifier: response_identifier,
       data: { message: 'User updated successfully', user: rows[0] },
     });
 
   } catch (error) {
     console.error('Error updating user:', error);
     res.status(500).json({
-      identifier: responseIdentifier,
+      identifier: response_identifier,
       data: { error: 'An error occurred while updating the user.' }
     });
   }
@@ -401,119 +413,126 @@ const updateUser = async (req, res) => {
  * @route POST /api/v1/users/delete
  */
 const deleteUser = async (req, res) => {
+  // NO CHANGES NEEDED in this function
+  
   const { identifier, data } = req.body;
-  const responseIdentifier = identifier || { requestId: null, userId: null };
-  const { userId } = data;
+  const response_identifier = identifier || { request_id: null, user_id: null };
+  const { user_id } = data;
 
-  if (!userId) {
+  if (!user_id) {
     return res.status(400).json({
-      identifier: responseIdentifier,
-      data: { error: 'Request data must contain userId.' },
+      identifier: response_identifier,
+      data: { error: 'Request data must contain user_id.' },
     });
   }
 
   try {
-    // ON DELETE CASCADE in your schema will handle related data
     const query = 'DELETE FROM users WHERE user_id = $1 RETURNING *;';
-    const { rows } = await db.query(query, [userId]);
+    const { rows } = await db.query(query, [user_id]);
 
     if (rows.length === 0) {
       return res.status(404).json({
-        identifier: responseIdentifier,
+        identifier: response_identifier,
         data: { error: 'User not found.' }
       });
     }
 
     res.status(200).json({
-      identifier: responseIdentifier,
+      identifier: response_identifier,
       data: { message: 'User deleted successfully.' }
     });
 
   } catch (error) {
     console.error('Error deleting user:', error);
     res.status(500).json({
-      identifier: responseIdentifier,
+      identifier: response_identifier,
       data: { error: 'An error occurred while deleting the user.' }
     });
   }
 };
 
-
-// Add this to your user.controller.js
-// Make sure you have `const db = require('../../config/database');` at the top
-
 /**
- * @description List and search all users with pagination (using high-speed estimated counts)
+ * @description List and search all users with pagination
  * @route POST /api/v1/user/list
  */
 const listAndSearchUsers = async (req, res) => {
   console.log("listAndSearchUsers");
   const { identifier, data } = req.body;
 
-  const responseIdentifier = identifier || { requestId: null, userId: null };
+  const response_identifier = identifier || { request_id: null, user_id: null };
 
-  const { searchQuery, page, limit } = data;
+  // CHANGED: Added 'user_role' to allow filtering by role
+  const { search_query, page, limit, user_role } = data;
 
-  // Set defaults for pagination
-  const pageNum = parseInt(page, 10) || 1;
-  const limitNum = parseInt(limit, 10) || 20;
-  const offset = (pageNum - 1) * limitNum;
+  const page_num = parseInt(page, 10) || 1;
+  const limit_num = parseInt(limit, 10) || 20;
+  const offset = (page_num - 1) * limit_num;
 
-  // --- Dynamic Query Building ---
-  let whereClause = "";
+  // --- CHANGED: Switched to a more dynamic query builder ---
+  const where_conditions = [];
   const params = [];
+  let param_index = 1;
 
-  if (searchQuery) {
-    // We will search against name, email, and phone
-    params.push(`%${searchQuery}%`);
-    // $1 will be the searchQuery
-    whereClause = "WHERE name ILIKE $1 OR email ILIKE $1 OR phone ILIKE $1"; 
+  if (search_query) {
+    params.push(`%${search_query}%`);
+    // $1 will be the search_query
+    where_conditions.push(`(name ILIKE $${param_index} OR email ILIKE $${param_index} OR phone ILIKE $${param_index})`);
+    param_index++;
   }
+  
+  // CHANGED: Add filter for user_role if it's provided in the request
+  if (user_role) {
+    params.push(user_role);
+    where_conditions.push(`user_role = $${param_index}`);
+    param_index++;
+  }
+
+  const where_clause = where_conditions.length > 0 ? `WHERE ${where_conditions.join(' AND ')}` : "";
+  // --- End of dynamic query builder changes ---
 
   try {
     // 1. Get a high-speed ESTIMATED count
-    // We ask Postgres to "explain" the query and give us its plan,
-    // which includes an estimated row count. This is almost instant.
-    const estimateQuery = `EXPLAIN (FORMAT JSON) SELECT 1 FROM users ${whereClause}`;
-    const estimateResult = await db.query(estimateQuery, params);
+    const estimate_query = `EXPLAIN (FORMAT JSON) SELECT 1 FROM users ${where_clause}`;
+    const estimate_result = await db.query(estimate_query, params);
     
-    // The estimated count is nested in the query plan
-    const totalItems = estimateResult.rows[0]['QUERY PLAN'][0]['Plan Rows'];
-    const totalPages = Math.ceil(totalItems / limitNum);
+    const total_items = estimate_result.rows[0]['QUERY PLAN'][0]['Plan Rows'];
+    const total_pages = Math.ceil(total_items / limit_num);
 
-    // 2. Get the paginated data (This part is the same as before)
-    const dataParams = [...params]; // Start with search param, if it exists
-    dataParams.push(limitNum);      // Add LIMIT
-    dataParams.push(offset);        // Add OFFSET
+    // 2. Get the paginated data
+    const data_params = [...params]; 
+    data_params.push(limit_num);      // Add LIMIT
+    data_params.push(offset);         // Add OFFSET
 
-    const listQuery = `
+    // CHANGED: Added 'user_role' to SELECT and updated LIMIT/OFFSET param indexes
+    const list_query = `
       SELECT 
         user_id, 
         name, 
         email, 
         phone, 
-        profile_image_url, 
+        profile_image_url,
+        user_role, 
         created_at, 
         updated_at
       FROM users
-      ${whereClause}
+      ${where_clause}
       ORDER BY name ASC
-      LIMIT $${params.length + 1} OFFSET $${params.length + 2};
+      LIMIT $${param_index} OFFSET $${param_index + 1};
     `;
     
-    const listResult = await db.query(listQuery, dataParams);
-    const users = listResult.rows;
+    const list_result = await db.query(list_query, data_params);
+    const users = list_result.rows;
 
     // 3. Send the structured response
     res.status(200).json({
-      identifier: responseIdentifier,
+      identifier: response_identifier,
       data: {
         users: users,
         pagination: {
-          totalItems: totalItems, // This is now an estimate
-          totalPages: totalPages, // This is also an estimate
-          currentPage: pageNum,
-          pageSize: limitNum
+          total_items: total_items, 
+          total_pages: total_pages,
+          current_page: page_num,
+          page_size: limit_num
         }
       }
     });
@@ -521,12 +540,11 @@ const listAndSearchUsers = async (req, res) => {
   } catch (error) {
     console.error('Error listing/searching users:', error);
     res.status(500).json({
-      identifier: responseIdentifier,
+      identifier: response_identifier,
       data: { error: 'An error occurred while fetching users.' }
     });
   }
 };
-
 
 module.exports = {
   addFavorite,
