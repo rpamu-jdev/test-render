@@ -17,6 +17,10 @@ router.get('/', propertyController.getProperties);
 router.post('/details', propertyController.getPropertyById);
 
 
+// /api/v1/properties/search
+router.post('/search', propertyController.searchProperties);
+
+
 // UPDATE a property by ID (Placeholder for later)
 // router.put('/:id', propertyController.updateProperty);
 
