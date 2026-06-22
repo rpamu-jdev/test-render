@@ -14,7 +14,7 @@ const propertyRoutes = require('./api/routes/properties.routes');
 app.use('/api/v1/properties', propertyRoutes);
 
 // --- Catch-all: serve the website ---
-app.get('*', (req, res) => {
+app.get('/{*splat}', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
