@@ -1,19 +1,21 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 
 const app = express();
 
 // --- Middleware ---
-app.use(cors()); // Enable Cross-Origin Resource Sharing
-app.use(express.json()); // Enable parsing of JSON request bodies
+app.use(cors());
+app.use(express.json());
+app.use(express.static(path.join(__dirname, '../public')));
 
-// --- Routes ---
-app.get('/', (req, res) => {
-  res.send('Welcome to the Real Estate API! The database is connected.');
-});
-
-// Later, we will add our API routes here like this:
+// --- API Routes ---
 const propertyRoutes = require('./api/routes/properties.routes');
 app.use('/api/v1/properties', propertyRoutes);
 
-module.exports = app; // Export the configured app
+// --- Catch-all: serve the website ---
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/index.html'));
+});
+
+module.exports = app;
